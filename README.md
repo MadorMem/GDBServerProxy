@@ -2,7 +2,7 @@
 Hi! This is a gdbserver in python, its currently used to remotely control ollydbg2 using gdb client elsewhere.  
 This source code was taken from <https://github.com/0vercl0k/ollydbg2-python/tree/master/samples/gdbserver> that he/she took from/was inspired by <http://mspgcc.cvs.sourceforge.net/viewvc/mspgcc/msp430simu/gdbserver.py?revision=1.3&content-type=text%2Fplain> (if link is dead: <https://github.com/travisgoodspeed/msp430simu/blob/master/gdbserver.py>)  
 
-The current purpose is to convert it to connect to a proprietary debugging interface via serial/telnet/ssh/etc so that a gdb client (IDA/gdb/etc) can connect and debug the product as if it had gdbserver running directly on it!.
+The current purpose is to convert it to connect to a proprietary debugging interface via serial/telnet/ssh/etc so that a gdb client (IDA/gdb/etc) can connect and debug the device/product as if it had gdbserver running directly on it!.
 
 The current goals are:  
 
