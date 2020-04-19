@@ -1,3 +1,9 @@
+# Project Technologies
+ - Python 3.7+
+ - Brain
+ - Good Music
+ - Coffee  
+
 # Introduction  
 Hi! This is a gdbserver in python, its currently used to remotely control ollydbg2 using gdb client elsewhere.  
 This source code was taken from <https://github.com/0vercl0k/ollydbg2-python/tree/master/samples/gdbserver> that he/she took from/was inspired by <http://mspgcc.cvs.sourceforge.net/viewvc/mspgcc/msp430simu/gdbserver.py?revision=1.3&content-type=text%2Fplain> (if link is dead: <https://github.com/travisgoodspeed/msp430simu/blob/master/gdbserver.py>)  
