@@ -31,6 +31,7 @@ As of right now, it's buggy and needs more work!
 <https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html>  
 <https://www.embecosm.com/appnotes/ean4/embecosm-howto-rsp-server-ean4-issue-2.html>  
 <https://www.google.com/search?q=gdb+rsp>  
+[GDB Packets](https://sourceware.org/gdb/current/onlinedocs/gdb/Packets.html)  
   
 # Original Creators/Forked From:  
 <https://github.com/0vercl0k/ollydbg2-python/blob/master/samples/gdbserver/gdbserver.py>  
