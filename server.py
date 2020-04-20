@@ -32,6 +32,50 @@ def checksum(data):
         checksum += ord(c)
     return checksum & 0xff
 
+class GDBPacketInvalidChecksumError(Exception):
+    pass
+
+class GDBClientHandler:
+    def __init__(self, socket, vendor, logger):
+        self._socket = socket
+        self._vendor = vendor
+        self._logger = logger
+        self._logger.debug("GDBClientHandler created")
+        self._packet_handlers = {
+            '!': vendor.handle_extended_mode,
+            '?': vendor.handle_question_mark,
+        }
+
+    def close(self):
+        self._socket.close()
+        self._vendor.fini()
+        self._logger.debug("GDBClientHandler closed")
+
+    def run(self):
+        self._logger.debug("Running loop")
+        while True:
+            try:
+                self._handle(self._recv_packet())
+            except GDBPacketInvalidChecksumError as e:
+                self._send_invalid_packet_response()
+
+    def _send_packet_ack(self):
+        self._socket.send("+")
+
+    def _send_invalid_packet_response(self):
+        self._socket.send("-")
+
+    def _handle(self, packet):
+        self._logger.info("Recieved packet:\n%s\n".format(packet))
+        self._send_packet_ack() # Each recv'd packet must be acked
+        command_type = packet[0:1]
+        packet_data = packet[1:]
+        self._packet_handlers[command_type](packet_data)
+
+    def _handle_extended_mode(self, packet_data):
+        
+
+
 # Code a bit inspired from http://mspgcc.cvs.sourceforge.net/viewvc/mspgcc/msp430simu/gdbserver.py?revision=1.3&content-type=text%2Fplain
 class GDBClientHandler(object):
     def __init__(self, clientsocket):
