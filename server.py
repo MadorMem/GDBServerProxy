@@ -19,7 +19,9 @@ class GDBPacketType(Enum):
 class GDBPacketConsts(Enum):
     PACKET_START = '$',
     PACKET_END = '#',
-    PACKET_ESCAPE = '}'
+    PACKET_ESCAPE = '}',
+    PACKET_ACK = '+',
+    PACKET_FAILURE = '-'
     
 
 class GDBClientHandler:
@@ -54,14 +56,14 @@ class GDBClientHandler:
         while True:
             try:
                 self._handle(self._recv_packet())
-            except GDBPacketInvalidChecksumError as e:
-                self._send_invalid_packet_response()
+            except (GDBPacketInvalidChecksumError, GDBPacketInvalidPacketError) as e:
+                self._send_packet_failure()
 
     def _send_packet_ack(self):
-        self._socket.send("+")
+        self._socket.send(GDBPacketConsts.PACKET_ACK)
 
-    def _send_invalid_packet_response(self):
-        self._socket.send("-")
+    def _send_packet_failure(self):
+        self._socket.send(GDBPacketConsts.PACKET_FAILURE)
 
     def _handle(self, packet):
         self._logger.info("Recieved packet:\n%s\n".format(packet))
@@ -101,7 +103,6 @@ class GDBClientHandler:
             raise GDBPacketInvalidChecksumError
         return packet_data
 
-
     def receive(self):
         """
         Recieve incoming packets from a GDB client from the socket.
@@ -122,6 +123,20 @@ class GDBClientHandler:
         else:
             self._logger.error("No packet start char (aka '{}')".format(GDBPacketConsts.PACKET_START))
             raise GDBPacketInvalidPacketError
+
+    def _send_raw_msg(self, raw_data):
+        """
+        Sends a raw message.
+        DO NOT USE unless necessary.
+        Cases where it should be used:
+            - Sending a GDB Packet that has been assembled
+            - Sending '+' or '-' (aka simple packets)
+        """
+
+    def send(self, data):
+        '''Send a packet to the GDB client'''
+        self._logger.info()
+        self.send_raw('$%s#%.2x' % (msg, checksum(msg)))
 
 
 class GDBClientHandler(object):
@@ -221,35 +236,6 @@ class GDBClientHandler(object):
             dispatchers[cmd](subcmd)
 
         self.close()
-
-    def receive(self):
-        '''Receive a packet from a GDB client'''
-        # XXX: handle the escaping stuff '}' & (n^0x20)
-        csum = 0
-        state = 'Finding SOP'
-        packet = ''
-        while True:
-            c = self.netin.read(1)
-            if c == '\x03':
-                return 'Error: CTRL+C'
-            
-            if len(c) != 1:
-                return 'Error: EOF'
-
-            if state == 'Finding SOP':
-                if c == '$':
-                    state = 'Finding EOP'
-            elif state == 'Finding EOP':
-                if c == '#':
-                    if csum != int(self.netin.read(2), 16):
-                        raise Exception('invalid checksum')
-                    self.last_pkt = packet
-                    return 'Good'
-                else:
-                    packet += c
-                    csum = (csum + ord(c)) & 0xff               
-            else:
-                raise Exception('should not be here')
 
     def send(self, msg):
         '''Send a packet to the GDB client'''
