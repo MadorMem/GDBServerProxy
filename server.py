@@ -1,4 +1,5 @@
 import socket
+import enum
 import logging
 import struct
 import Packets
@@ -12,16 +13,18 @@ class GDBPacketInvalidPacketError(Exception):
 class GDBServerNetworkError(Exception):
     pass
 
-class GDBPacketType(Enum):
+class GDBPacketType(enum.Enum):
     BREAK = 0
     REGULAR_PACKET = 1
+    RETRANSMIT = 2
+    ACK = 3
 
-class GDBPacketConsts(Enum):
-    PACKET_START = '$',
-    PACKET_END = '#',
-    PACKET_ESCAPE = '}',
-    PACKET_ACK = '+',
-    PACKET_FAILURE = '-'
+class GDBPacketConsts:
+    PACKET_START = b'$'
+    PACKET_END = b'#'
+    PACKET_ESCAPE = b'}'
+    PACKET_ACK = b'+'
+    PACKET_FAILURE = b'-'
     
 
 class GDBClientHandler:
@@ -30,9 +33,10 @@ class GDBClientHandler:
         self._vendor = vendor
         self._logger = logger
         self._logger.debug("GDBClientHandler created")
+        self._last_sent_packet = ''
         self._packet_handlers = {
-            '!': vendor.handle_extended_mode,
-            '?': vendor.handle_question_mark,
+            # '!': vendor.handle_extended_mode,
+            # '?': vendor.handle_question_mark,
         }
 
     @classmethod
@@ -55,7 +59,7 @@ class GDBClientHandler:
         self._logger.debug("Running loop")
         while True:
             try:
-                self._handle(self._recv_packet())
+                self._handle(self.receive())
             except (GDBPacketInvalidChecksumError, GDBPacketInvalidPacketError) as e:
                 self._send_packet_failure()
 
@@ -66,7 +70,7 @@ class GDBClientHandler:
         self._socket.send(GDBPacketConsts.PACKET_FAILURE)
 
     def _handle(self, packet):
-        self._logger.info("Recieved packet:\n%s\n".format(packet))
+        self._logger.info("Recieved packet:\n{}\n".format(packet))
         self._send_packet_ack() # Each recv'd packet must be acked
         command_type = packet.command_type
         self._packet_handlers[command_type](packet)
@@ -112,6 +116,7 @@ class GDBClientHandler:
 
         packet_data = ''
         current_char = self._socket.recv(1)
+        self._logger.debug("First char is : {}\n".format(current_char))
         if len(current_char) < 1:
             self._logger.error("packet_type length < 1")
             raise GDBServerNetworkError("Could not recieve packet type")
@@ -120,6 +125,11 @@ class GDBClientHandler:
             return GDBPacketType.BREAK, ''
         elif current_char == GDBPacketConsts.PACKET_START:
             return GDBPacketType.REGULAR_PACKET, self._handle_packet_data_recv()
+        elif current_char == GDBPacketConsts.PACKET_FAILURE:
+            self.retransmit()
+            return GDBPacketType.RETRANSMIT, ''
+        elif current_char == GDBPacketConsts.PACKET_ACK:
+            return GDBPacketType.ACK, ''
         else:
             self._logger.error("No packet start char (aka '{}')".format(GDBPacketConsts.PACKET_START))
             raise GDBPacketInvalidPacketError
@@ -131,9 +141,13 @@ class GDBClientHandler:
         Cases where it should be used:
             - Sending a GDB Packet that has been assembled
             - Sending simple packets (packet ack / packet invalid)
+            - Retransmit
         """
 
         self._socket.send(raw_data)
+
+    def retransmit(self):
+        self._send_raw_msg(self._last_sent_packet)
 
     def send_data(self, data):
         """
@@ -141,10 +155,12 @@ class GDBClientHandler:
         """
 
         self._logger.info("Sending:\n{}\n".format(data))
-        self._send_raw_msg("$%s#%.2x" % (data, self.calculate_packet_checksum(data)))
+        packet = "$%s#%.2x" % (data, self.calculate_packet_checksum(data))
+        self._send_raw_msg(packet)
+        self._last_sent_packet = packet # Save the packet in case of re-transmit
 
 
-class GDBClientHandler(object):
+class GDBClientHandlerlegacy(object):
     def __init__(self, clientsocket):
         self.clientsocket = clientsocket
         self.netin = clientsocket.makefile('r')
@@ -252,7 +268,8 @@ class GDBClientHandler(object):
         self.netout.flush()     
 
 def main():
-    logging.basicConfig(level = logging.WARN)
+    logging.basicConfig(level = logging.DEBUG)
+    GDBClientHandler(socket.create_server(("", 1337)).accept()[0], None, logging).run()
     for logger in 'gdbclienthandler runner main'.split(' '):
         logging.getLogger(logger).setLevel(level = logging.INFO)
 
