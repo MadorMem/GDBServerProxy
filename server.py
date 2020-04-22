@@ -1,36 +1,7 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-#
-#    gdbserver.py - Control OllyDBG2 with GDB over the network! (for fun)
-#    Copyright (C) 2013 Axel "0vercl0k" Souchet - http://www.twitter.com/0vercl0k
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-import sys
 import socket
 import logging
 import struct
 import Packets
-
-GDB_SIGNAL_TRAP = 5
-
-def checksum(data):
-    checksum = 0
-    for c in data:
-        checksum += ord(c)
-    return checksum & 0xff
 
 class GDBPacketInvalidChecksumError(Exception):
     pass
@@ -38,9 +9,17 @@ class GDBPacketInvalidChecksumError(Exception):
 class GDBPacketInvalidPacketError(Exception):
     pass
 
+class GDBServerNetworkError(Exception):
+    pass
+
 class GDBPacketType(Enum):
     BREAK = 0
     REGULAR_PACKET = 1
+
+class GDBPacketConsts(Enum):
+    PACKET_START = '$',
+    PACKET_END = '#',
+    PACKET_ESCAPE = '}'
     
 
 class GDBClientHandler:
@@ -53,6 +32,17 @@ class GDBClientHandler:
             '!': vendor.handle_extended_mode,
             '?': vendor.handle_question_mark,
         }
+
+    @classmethod
+    def calculate_packet_checksum(cls, data):
+        checksum = 0
+        for byte in data:
+            checksum += ord(byte)
+        return checksum & 0xff
+    
+    @classmethod
+    def escape_packet_byte(cls, byte):
+        return byte ^ 0x20
 
     def close(self):
         self._socket.close()
@@ -82,42 +72,58 @@ class GDBClientHandler:
     def _handle_extended_mode(self, packet_data):
         pass
 
+    def _handle_packet_data_recv(self):
+        """
+        This function will handle the recv of packet data, and only packet data.
+        This function expects the socket buffer to NOT contain PACKET_START.
+        This function WILL handle the validation of the checksum.
+        :raises: GDBPacketInvalidChecksumError
+        :returns: packet_data as string
+        """
+        packet_data = ''
+        current_char = ''
+
+        # Recv until end
+        while current_char != GDBPacketConsts.PACKET_END:
+            packet_data = packet_data + current_char
+            current_char = self._socket.recv(1)
+            # When an escape character shows, the next byte should be escaped
+            # Due to the fact that escape chars can be '#' we have to immediatly add them
+            if current_char == GDBPacketConsts.PACKET_ESCAPE:
+                packet_data = packet_data + self.escape_packet_byte(self._socket.recv(1))
+                # Get the next byte for the next iteration
+                current_char = self._socket.recv(1)
+
+        # Reached End of Packet, last 2 bytes should be checksum
+        reported_packet_checksum = self._socket.recv(2)
+        calculated_packet_checksum = self.calculate_packet_checksum(packet_data)
+        if reported_packet_checksum != calculated_packet_checksum:
+            raise GDBPacketInvalidChecksumError
+        return packet_data
+
+
     def receive(self):
         """
-        Recieve incoming packets from a GDB client
-        WIP: This is copied from other sources
+        Recieve incoming packets from a GDB client from the socket.
+        :returns: GDBPacketType, data
+        :raises: GDBPacketInvalidPacketError, GDBPacketInvalidChecksumError (Due to _handle_packet_data_recv)
         """
-        # XXX: handle the escaping stuff '}' & (n^0x20)
-        checksum = 0
-        csum = 0
-        state = 'Finding SOP'
-        packet = ''
-        while True:
-            packet_type = self._socket.recv(1)
-            if packet_type == '\x03':
-                return GDBPacketType.BREAK, ''
-            
-            if len(c) != 1:
-                raise GDBPacketInvalidPacketError
 
-            # if state == 'Finding SOP':
-            #     if c == '$':
-            #         state = 'Finding EOP'
-            # elif state == 'Finding EOP':
-            #     if c == '#':
-            #         if csum != int(self.netin.read(2), 16):
-            #             raise Exception('invalid checksum')
-            #         self.last_pkt = packet
-            #         return 'Good'
-            #     else:
-            #         packet += c
-            #         csum = (csum + ord(c)) & 0xff               
-            # else:
-            #     raise Exception('should not be here')
-        
+        packet_data = ''
+        current_char = self._socket.recv(1)
+        if len(current_char) < 1:
+            self._logger.error("packet_type length < 1")
+            raise GDBServerNetworkError("Could not recieve packet type")
+
+        if current_char == '\x03':
+            return GDBPacketType.BREAK, ''
+        elif current_char == GDBPacketConsts.PACKET_START:
+            return GDBPacketType.REGULAR_PACKET, self._handle_packet_data_recv()
+        else:
+            self._logger.error("No packet start char (aka '{}')".format(GDBPacketConsts.PACKET_START))
+            raise GDBPacketInvalidPacketError
 
 
-# Code a bit inspired from http://mspgcc.cvs.sourceforge.net/viewvc/mspgcc/msp430simu/gdbserver.py?revision=1.3&content-type=text%2Fplain
 class GDBClientHandler(object):
     def __init__(self, clientsocket):
         self.clientsocket = clientsocket
