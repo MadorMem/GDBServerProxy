@@ -18,11 +18,11 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-from ollyapi import *
 import sys
 import socket
 import logging
 import struct
+import Packets
 
 GDB_SIGNAL_TRAP = 5
 
@@ -34,6 +34,14 @@ def checksum(data):
 
 class GDBPacketInvalidChecksumError(Exception):
     pass
+
+class GDBPacketInvalidPacketError(Exception):
+    pass
+
+class GDBPacketType(Enum):
+    BREAK = 0
+    REGULAR_PACKET = 1
+    
 
 class GDBClientHandler:
     def __init__(self, socket, vendor, logger):
@@ -68,11 +76,44 @@ class GDBClientHandler:
     def _handle(self, packet):
         self._logger.info("Recieved packet:\n%s\n".format(packet))
         self._send_packet_ack() # Each recv'd packet must be acked
-        command_type = packet[0:1]
-        packet_data = packet[1:]
-        self._packet_handlers[command_type](packet_data)
+        command_type = packet.command_type
+        self._packet_handlers[command_type](packet)
 
     def _handle_extended_mode(self, packet_data):
+        pass
+
+    def receive(self):
+        """
+        Recieve incoming packets from a GDB client
+        WIP: This is copied from other sources
+        """
+        # XXX: handle the escaping stuff '}' & (n^0x20)
+        checksum = 0
+        csum = 0
+        state = 'Finding SOP'
+        packet = ''
+        while True:
+            packet_type = self._socket.recv(1)
+            if packet_type == '\x03':
+                return GDBPacketType.BREAK, ''
+            
+            if len(c) != 1:
+                raise GDBPacketInvalidPacketError
+
+            # if state == 'Finding SOP':
+            #     if c == '$':
+            #         state = 'Finding EOP'
+            # elif state == 'Finding EOP':
+            #     if c == '#':
+            #         if csum != int(self.netin.read(2), 16):
+            #             raise Exception('invalid checksum')
+            #         self.last_pkt = packet
+            #         return 'Good'
+            #     else:
+            #         packet += c
+            #         csum = (csum + ord(c)) & 0xff               
+            # else:
+            #     raise Exception('should not be here')
         
 
 
