@@ -130,13 +130,18 @@ class GDBClientHandler:
         DO NOT USE unless necessary.
         Cases where it should be used:
             - Sending a GDB Packet that has been assembled
-            - Sending '+' or '-' (aka simple packets)
+            - Sending simple packets (packet ack / packet invalid)
         """
 
-    def send(self, data):
-        '''Send a packet to the GDB client'''
-        self._logger.info()
-        self.send_raw('$%s#%.2x' % (msg, checksum(msg)))
+        self._socket.send(raw_data)
+
+    def send_data(self, data):
+        """
+        Construct a GDB packet and send it
+        """
+
+        self._logger.info("Sending:\n{}\n".format(data))
+        self._send_raw_msg("$%s#%.2x" % (data, self.calculate_packet_checksum(data)))
 
 
 class GDBClientHandler(object):
