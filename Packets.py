@@ -4,18 +4,17 @@ class GDBCommandType(enum.Enum):
     pass
 
 class GDBPacketType(enum.Enum):
-    BREAK = 0
-    REGULAR_PACKET = 1
-    RETRANSMIT = 2
-    ACK = 3
-    DISCONNECT = 4
+    ACK = b'+'
+    RETRANSMIT = b'-'
+    REGULAR_PACKET = b'$'
+    BREAK = b'\x03'
+    DISCONNECT = b''
 
 class GDBPacketConsts:
-    PACKET_START = b'$'
+    PACKET_ACK = b'+'
+    PACKET_RETRANSMIT = b'-'
     PACKET_END = b'#'
     PACKET_ESCAPE = b'}'
-    PACKET_ACK = b'+'
-    PACKET_FAILURE = b'-'
 
 class GDBClientPacket:
     """
@@ -24,10 +23,10 @@ class GDBClientPacket:
     END_OF_PACKET = '#'
     START_OF_PACKET = '$'
 
-    def __init__(self, packet_type, command_type=None, data=None, **kwargs):
+    def __init__(self, packet_type, raw_packet_data=None, **kwargs):
         self._type = packet_type
-        self._command = command_type
-        self._data = data
+        self._command = None
+        self._raw_data = raw_packet_data
         self.__dict__.update(kwargs) # This will add any variable name to the class given as a kwargs
 
     @property

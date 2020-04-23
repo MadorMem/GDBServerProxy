@@ -23,7 +23,9 @@ class GDBClientHandler:
         self._logger.debug("GDBClientHandler created")
         self._last_sent_packet = None
         self._packet_type_handlers = {
-            Packets.GDBPacketType.REGULAR_PACKET: self._handle_regular_packet
+            Packets.GDBPacketType.REGULAR_PACKET: self._handle_regular_packet,
+            Packets.GDBPacketType.ACK: lambda nop: None,
+            Packets.GDBPacketType.RETRANSMIT: lambda packet: self.retransmit() # Lambda since handlers give 'packet' and we want to ignore it here
         }
         self._packet_handlers = {
             # '!': vendor.handle_extended_mode,
@@ -60,7 +62,7 @@ class GDBClientHandler:
         self._socket.send(Packets.GDBPacketConsts.PACKET_ACK)
 
     def _send_packet_failure(self):
-        self._socket.send(Packets.GDBPacketConsts.PACKET_FAILURE)
+        self._socket.send(Packets.GDBPacketConsts.PACKET_RETRANSMIT)
 
     def _handle_regular_packet(self, packet):
         command_type = packet.command
@@ -126,23 +128,22 @@ class GDBClientHandler:
         """
 
         packet_data = ''
-        current_char = self._socket.recv(1)
-        self._logger.debug("First char is : {}\n".format(current_char))
-        if len(current_char) < 1:
+        packet_type = self._socket.recv(1)
+        self._logger.debug("First char is : {}\n".format(packet_type))
+        if len(packet_type) < 1:
             self._logger.info("Client dropped")
             self.close()
 
-        if current_char == '\x03':
-            return Packets.GDBClientPacket(Packets.GDBPacketType.BREAK)
-        elif current_char == Packets.GDBPacketConsts.PACKET_START:
-            return Packets.GDBClientPacket(Packets.GDBPacketType.REGULAR_PACKET, self._handle_packet_data_recv())
-        elif current_char == Packets.GDBPacketConsts.PACKET_FAILURE:
-            self.retransmit()
-            return Packets.GDBClientPacket(Packets.GDBPacketType.RETRANSMIT)
-        elif current_char == Packets.GDBPacketConsts.PACKET_ACK:
-            return Packets.GDBClientPacket(Packets.GDBPacketType.ACK)
-        else:
-            self._logger.error("No packet start char (aka '{}')".format(Packets.GDBPacketConsts.PACKET_START))
+        try:
+            packet_type_enum = Packets.GDBPacketType(packet_type)
+            if packet_type_enum == Packets.GDBPacketType.REGULAR_PACKET: # If its a regular packet, get packet data
+                packet = Packets.GDBClientPacket(packet_type_enum, self._handle_packet_data_recv())
+            else:
+                packet = Packets.GDBClientPacket(packet_type_enum)
+
+            return packet
+        except ValueError:
+            self._logger.error("Invalid packet type '{}'".format(packet_type))
             raise GDBPacketInvalidPacketError
 
     def _send_raw_msg(self, raw_bytes):
