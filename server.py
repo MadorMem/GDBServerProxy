@@ -24,8 +24,8 @@ class GDBClientHandler:
         self._last_sent_packet = None
         self._packet_type_handlers = {
             Packets.GDBPacketType.REGULAR_PACKET: self._handle_regular_packet,
-            Packets.GDBPacketType.ACK: lambda nop: None,
-            Packets.GDBPacketType.RETRANSMIT: lambda packet: self.retransmit() # Lambda since handlers give 'packet' and we want to ignore it here
+            Packets.GDBPacketType.ACK: lambda nop: None, # No handler here, just do a 'nop'
+            Packets.GDBPacketType.RETRANSMIT: lambda packet: self.retransmit() # Lambda since handlers get 'packet' param and we want to ignore it here
         }
         self._packet_handlers = {
             # '!': vendor.handle_extended_mode,
@@ -34,10 +34,12 @@ class GDBClientHandler:
 
     @classmethod
     def calculate_packet_checksum(cls, packet_bytes):
-        checksum = 0
-        for byte in packet_bytes:
-            checksum += byte
-        return checksum & 0xff
+        """
+        This function calculates GDB RSP packet checksum.
+        :param packet_bytes: must be BYTES, data to calculate checksum on.
+        :returns: calculated checksum.
+        """
+        return sum(packet_bytes) & 0xff
     
     @classmethod
     def escape_packet_byte(cls, byte):
