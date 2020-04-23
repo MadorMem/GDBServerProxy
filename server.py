@@ -13,19 +13,7 @@ class GDBPacketInvalidPacketError(Exception):
 class GDBServerNetworkError(Exception):
     pass
 
-class GDBPacketType(enum.Enum):
-    BREAK = 0
-    REGULAR_PACKET = 1
-    RETRANSMIT = 2
-    ACK = 3
 
-class GDBPacketConsts:
-    PACKET_START = b'$'
-    PACKET_END = b'#'
-    PACKET_ESCAPE = b'}'
-    PACKET_ACK = b'+'
-    PACKET_FAILURE = b'-'
-    
 
 class GDBClientHandler:
     def __init__(self, socket, vendor, logger):
@@ -33,17 +21,20 @@ class GDBClientHandler:
         self._vendor = vendor
         self._logger = logger
         self._logger.debug("GDBClientHandler created")
-        self._last_sent_packet = ''
+        self._last_sent_packet = None
+        self._packet_type_handlers = {
+            Packets.GDBPacketType.REGULAR_PACKET: self._handle_regular_packet
+        }
         self._packet_handlers = {
             # '!': vendor.handle_extended_mode,
             # '?': vendor.handle_question_mark,
         }
 
     @classmethod
-    def calculate_packet_checksum(cls, data):
+    def calculate_packet_checksum(cls, packet_bytes):
         checksum = 0
-        for byte in data:
-            checksum += ord(byte)
+        for byte in packet_bytes:
+            checksum += byte
         return checksum & 0xff
     
     @classmethod
@@ -54,26 +45,44 @@ class GDBClientHandler:
         self._socket.close()
         self._vendor.fini()
         self._logger.debug("GDBClientHandler closed")
+        self._is_running = False
 
     def run(self):
+        self._is_running = True
         self._logger.debug("Running loop")
-        while True:
+        while self._is_running:
             try:
                 self._handle(self.receive())
             except (GDBPacketInvalidChecksumError, GDBPacketInvalidPacketError) as e:
                 self._send_packet_failure()
 
     def _send_packet_ack(self):
-        self._socket.send(GDBPacketConsts.PACKET_ACK)
+        self._socket.send(Packets.GDBPacketConsts.PACKET_ACK)
 
     def _send_packet_failure(self):
-        self._socket.send(GDBPacketConsts.PACKET_FAILURE)
+        self._socket.send(Packets.GDBPacketConsts.PACKET_FAILURE)
+
+    def _handle_regular_packet(self, packet):
+        command_type = packet.command
+        if command_type in self._packet_handlers:
+            self._packet_handlers[command_type](packet)
+        else:
+            self._logger.info(
+                "No handler for packet command {}, packet data was: {}\nSending unsupported to client"
+                .format(
+                    packet.command,
+                    packet.data
+                )
+            )
+            # TODO: Return unsupported
 
     def _handle(self, packet):
         self._logger.info("Recieved packet:\n{}\n".format(packet))
         self._send_packet_ack() # Each recv'd packet must be acked
-        command_type = packet.command_type
-        self._packet_handlers[command_type](packet)
+        if packet.type in self._packet_type_handlers:
+            self._packet_type_handlers[packet.type](packet)
+        else:
+            self._logger.info("No handler for packet type {}, packet data was: {}".format(packet.type, packet.data))
 
     def _handle_extended_mode(self, packet_data):
         pass
@@ -84,18 +93,18 @@ class GDBClientHandler:
         This function expects the socket buffer to NOT contain PACKET_START.
         This function WILL handle the validation of the checksum.
         :raises: GDBPacketInvalidChecksumError
-        :returns: packet_data as string
+        :returns: packet_data as bytes
         """
-        packet_data = ''
-        current_char = ''
+        packet_data = b''
+        current_char = b''
 
         # Recv until end
-        while current_char != GDBPacketConsts.PACKET_END:
+        while current_char != Packets.GDBPacketConsts.PACKET_END:
             packet_data = packet_data + current_char
             current_char = self._socket.recv(1)
             # When an escape character shows, the next byte should be escaped
             # Due to the fact that escape chars can be '#' we have to immediatly add them
-            if current_char == GDBPacketConsts.PACKET_ESCAPE:
+            if current_char == Packets.GDBPacketConsts.PACKET_ESCAPE:
                 packet_data = packet_data + self.escape_packet_byte(self._socket.recv(1))
                 # Get the next byte for the next iteration
                 current_char = self._socket.recv(1)
@@ -105,12 +114,14 @@ class GDBClientHandler:
         calculated_packet_checksum = self.calculate_packet_checksum(packet_data)
         if reported_packet_checksum != calculated_packet_checksum:
             raise GDBPacketInvalidChecksumError
+
+        self._logger.debug("Recv'd packet (valid checksum):\n{}\n".format(packet_data))
         return packet_data
 
     def receive(self):
         """
         Recieve incoming packets from a GDB client from the socket.
-        :returns: GDBPacketType, data
+        :returns: GDBClientPacket
         :raises: GDBPacketInvalidPacketError, GDBPacketInvalidChecksumError (Due to _handle_packet_data_recv)
         """
 
@@ -118,23 +129,23 @@ class GDBClientHandler:
         current_char = self._socket.recv(1)
         self._logger.debug("First char is : {}\n".format(current_char))
         if len(current_char) < 1:
-            self._logger.error("packet_type length < 1")
-            raise GDBServerNetworkError("Could not recieve packet type")
+            self._logger.info("Client dropped")
+            self.close()
 
         if current_char == '\x03':
-            return GDBPacketType.BREAK, ''
-        elif current_char == GDBPacketConsts.PACKET_START:
-            return GDBPacketType.REGULAR_PACKET, self._handle_packet_data_recv()
-        elif current_char == GDBPacketConsts.PACKET_FAILURE:
+            return Packets.GDBClientPacket(Packets.GDBPacketType.BREAK)
+        elif current_char == Packets.GDBPacketConsts.PACKET_START:
+            return Packets.GDBClientPacket(Packets.GDBPacketType.REGULAR_PACKET, self._handle_packet_data_recv())
+        elif current_char == Packets.GDBPacketConsts.PACKET_FAILURE:
             self.retransmit()
-            return GDBPacketType.RETRANSMIT, ''
-        elif current_char == GDBPacketConsts.PACKET_ACK:
-            return GDBPacketType.ACK, ''
+            return Packets.GDBClientPacket(Packets.GDBPacketType.RETRANSMIT)
+        elif current_char == Packets.GDBPacketConsts.PACKET_ACK:
+            return Packets.GDBClientPacket(Packets.GDBPacketType.ACK)
         else:
-            self._logger.error("No packet start char (aka '{}')".format(GDBPacketConsts.PACKET_START))
+            self._logger.error("No packet start char (aka '{}')".format(Packets.GDBPacketConsts.PACKET_START))
             raise GDBPacketInvalidPacketError
 
-    def _send_raw_msg(self, raw_data):
+    def _send_raw_msg(self, raw_bytes):
         """
         Sends a raw message.
         DO NOT USE unless necessary.
@@ -142,20 +153,26 @@ class GDBClientHandler:
             - Sending a GDB Packet that has been assembled
             - Sending simple packets (packet ack / packet invalid)
             - Retransmit
+        :param raw_bytes: bytes to send
         """
 
-        self._socket.send(raw_data)
+        self._socket.send(raw_bytes)
 
     def retransmit(self):
-        self._send_raw_msg(self._last_sent_packet)
+        if self._last_sent_packet != None:
+            self._send_raw_msg(self._last_sent_packet)
+        else:
+            self._logger.error("Retransmit asked when no packets were sent.")
 
     def send_data(self, data):
         """
         Construct a GDB packet and send it
+        :param data: data to send
         """
 
         self._logger.info("Sending:\n{}\n".format(data))
-        packet = "$%s#%.2x" % (data, self.calculate_packet_checksum(data))
+        # Encode since send requires bytes
+        packet = "$%s#%.2x" % (data, self.calculate_packet_checksum(data)).encode()
         self._send_raw_msg(packet)
         self._last_sent_packet = packet # Save the packet in case of re-transmit
 
